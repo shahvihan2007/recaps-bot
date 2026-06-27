@@ -113,6 +113,24 @@ const commands = [
         ]
       }
     ]
+  },
+  {
+    name: 'deleterecap',
+    description: 'Delete a recap from the database by its tag and recap number',
+    options: [
+      {
+        name: 'tag',
+        description: 'The tag associated with the recap (e.g. Ascendancy)',
+        type: 3, // String
+        required: true
+      },
+      {
+        name: 'recap_number',
+        description: 'The recap number (#) to delete',
+        type: 4, // Integer
+        required: true
+      }
+    ]
   }
 ];
 
@@ -145,6 +163,8 @@ client.on('interactionCreate', async interaction => {
     await handleAddRecap(interaction);
   } else if (commandName === 'linkrecaps') {
     await handleLinkRecaps(interaction);
+  } else if (commandName === 'deleterecap') {
+    await handleDeleteRecap(interaction);
   }
 });
 
@@ -357,6 +377,35 @@ async function handleLinkRecaps(interaction) {
       // Message might have been deleted, ignore
     }
   });
+}
+
+/**
+ * Handler for /deleterecap command
+ */
+async function handleDeleteRecap(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const tag = interaction.options.getString('tag');
+  const recapNumber = interaction.options.getInteger('recap_number');
+
+  try {
+    const deletedCount = db.deleteRecap({ tag, recap_number: recapNumber });
+
+    if (deletedCount > 0) {
+      await interaction.editReply({
+        content: `✅ Successfully deleted recap **#${recapNumber}** for tag **${tag}**.`
+      });
+    } else {
+      await interaction.editReply({
+        content: `❌ No recap found for tag **${tag}** with recap number **#${recapNumber}**.`
+      });
+    }
+  } catch (error) {
+    console.error("Error processing /deleterecap:", error);
+    await interaction.editReply({
+      content: `❌ Error deleting recap: ${error.message}`
+    });
+  }
 }
 
 // Log in to Discord

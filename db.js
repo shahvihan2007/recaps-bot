@@ -96,9 +96,19 @@ function getFilteredRecaps({ player, tag, month }) {
   return db.prepare(query).all(params);
 }
 
+/**
+ * Deletes a recap by its tag and recap_number.
+ */
+function deleteRecap({ tag, recap_number }) {
+  const result = db.prepare('DELETE FROM recaps WHERE LOWER(tag) = LOWER(?) AND recap_number = ?')
+                   .run(tag.trim(), recap_number);
+  return result.changes;
+}
+
 module.exports = {
   setup,
   addRecap,
   getFilteredRecaps,
+  deleteRecap,
   db
 };
