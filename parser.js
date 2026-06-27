@@ -186,8 +186,43 @@ function parseHtmlData(html, uuid) {
   };
 }
 
+/**
+ * Fetches and parses clan data.
+ */
+async function fetchClanData(clanName) {
+  if (!clanName || typeof clanName !== 'string' || clanName.trim() === '') {
+    throw new Error("Invalid clan name.");
+  }
+
+  const url = `https://stats.jartexnetwork.com/api/clans/${encodeURIComponent(clanName.trim())}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      'Accept': 'application/json'
+    }
+  });
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(`Clan "${clanName}" not found.`);
+    }
+    throw new Error(`Failed to fetch clan data (HTTP ${res.status}).`);
+  }
+
+  const data = await res.json();
+  if (!data || !data.name) {
+    throw new Error(`Invalid clan data returned for "${clanName}".`);
+  }
+
+  return {
+    name: data.name,
+    currentTrophies: typeof data.currentTrophies === 'number' ? data.currentTrophies : 0
+  };
+}
+
 module.exports = {
   validateUrl,
   extractUuid,
-  fetchRecapData
+  fetchRecapData,
+  fetchClanData
 };

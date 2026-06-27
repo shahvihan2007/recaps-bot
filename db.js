@@ -30,6 +30,15 @@ function setup() {
       timestamp TEXT NOT NULL,
       recap_number INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS tracked_clans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      clan_name TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      last_trophies INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(clan_name, channel_id)
+    );
   `);
 }
 
@@ -105,10 +114,53 @@ function deleteRecap({ tag, recap_number }) {
   return result.changes;
 }
 
+/**
+ * Adds a new clan to track in a channel.
+ */
+function addTrackedClan({ clan_name, channel_id, last_trophies }) {
+  const timestamp = new Date().toISOString();
+  const insert = db.prepare(`
+    INSERT INTO tracked_clans (clan_name, channel_id, last_trophies, created_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(clan_name, channel_id) DO UPDATE SET
+      last_trophies = excluded.last_trophies,
+      created_at = excluded.created_at
+  `);
+  insert.run(clan_name.trim(), channel_id, last_trophies, timestamp);
+}
+
+/**
+ * Removes a tracked clan from a channel.
+ */
+function removeTrackedClan({ clan_name, channel_id }) {
+  const result = db.prepare('DELETE FROM tracked_clans WHERE LOWER(clan_name) = LOWER(?) AND channel_id = ?')
+                   .run(clan_name.trim(), channel_id);
+  return result.changes;
+}
+
+/**
+ * Gets all tracked clans.
+ */
+function getTrackedClans() {
+  return db.prepare('SELECT * FROM tracked_clans').all();
+}
+
+/**
+ * Updates the last trophy count for all records of a specific clan.
+ */
+function updateClanTrophies(clan_name, new_trophies) {
+  db.prepare('UPDATE tracked_clans SET last_trophies = ? WHERE LOWER(clan_name) = LOWER(?)')
+    .run(new_trophies, clan_name.trim());
+}
+
 module.exports = {
   setup,
   addRecap,
   getFilteredRecaps,
   deleteRecap,
+  addTrackedClan,
+  removeTrackedClan,
+  getTrackedClans,
+  updateClanTrophies,
   db
 };

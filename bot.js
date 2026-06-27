@@ -131,6 +131,30 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: 'trackclan',
+    description: 'Track clan trophies in this channel (updates checked every 1 min)',
+    options: [
+      {
+        name: 'clan_name',
+        description: 'The name of the clan to track (e.g. Vertigo)',
+        type: 3, // String
+        required: true
+      }
+    ]
+  },
+  {
+    name: 'untrackclan',
+    description: 'Stop tracking clan trophies in this channel',
+    options: [
+      {
+        name: 'clan_name',
+        description: 'The name of the clan to stop tracking',
+        type: 3, // String
+        required: true
+      }
+    ]
   }
 ];
 
@@ -151,6 +175,11 @@ client.once('ready', async () => {
   } catch (error) {
     console.error('Error registering slash commands:', error);
   }
+
+  // Start background trophy checking interval (every 1 minute)
+  setInterval(checkTrophies, 60000);
+  // Initial check after 5 seconds
+  setTimeout(checkTrophies, 5000);
 });
 
 // Handle commands
@@ -165,6 +194,10 @@ client.on('interactionCreate', async interaction => {
     await handleLinkRecaps(interaction);
   } else if (commandName === 'deleterecap') {
     await handleDeleteRecap(interaction);
+  } else if (commandName === 'trackclan') {
+    await handleTrackClan(interaction);
+  } else if (commandName === 'untrackclan') {
+    await handleUntrackClan(interaction);
   }
 });
 
@@ -405,6 +438,134 @@ async function handleDeleteRecap(interaction) {
     await interaction.editReply({
       content: `❌ Error deleting recap: ${error.message}`
     });
+  }
+}
+
+/**
+ * Handler for /trackclan command
+ */
+async function handleTrackClan(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const clanName = interaction.options.getString('clan_name');
+
+  try {
+    // 1. Fetch latest data from clan API to validate existence and get initial trophies
+    const clanData = await parser.fetchClanData(clanName);
+
+    // 2. Add to SQLite
+    db.addTrackedClan({
+      clan_name: clanData.name,
+      channel_id: interaction.channelId,
+      last_trophies: clanData.currentTrophies
+    });
+
+    await interaction.editReply({
+      content: `🔷 Now tracking clan **${clanData.name}** in this channel (Starting trophies: **${clanData.currentTrophies}**).`
+    });
+  } catch (error) {
+    console.error("Error processing /trackclan:", error);
+    await interaction.editReply({
+      content: `❌ Error tracking clan: ${error.message}`
+    });
+  }
+}
+
+/**
+ * Handler for /untrackclan command
+ */
+async function handleUntrackClan(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+
+  const clanName = interaction.options.getString('clan_name');
+
+  try {
+    const deletedCount = db.removeTrackedClan({
+      clan_name: clanName,
+      channel_id: interaction.channelId
+    });
+
+    if (deletedCount > 0) {
+      await interaction.editReply({
+        content: `🔷 Stopped tracking clan **${clanName}** in this channel.`
+      });
+    } else {
+      await interaction.editReply({
+        content: `❌ Clan **${clanName}** is not currently tracked in this channel.`
+      });
+    }
+  } catch (error) {
+    console.error("Error processing /untrackclan:", error);
+    await interaction.editReply({
+      content: `❌ Error untracking clan: ${error.message}`
+    });
+  }
+}
+
+/**
+ * Background loop to check trophies for all tracked clans
+ */
+async function checkTrophies() {
+  try {
+    // 1. Fetch all tracking entries
+    const entries = db.getTrackedClans();
+    if (entries.length === 0) return;
+
+    // 2. Group unique clan names to minimize API calls (Rate-limiting optimization)
+    const uniqueClanNames = [...new Set(entries.map(e => e.clan_name.toLowerCase()))];
+
+    // Map to hold fetched results
+    const latestClanTrophies = {};
+
+    for (const rawName of uniqueClanNames) {
+      try {
+        const data = await parser.fetchClanData(rawName);
+        latestClanTrophies[data.name.toLowerCase()] = {
+          name: data.name,
+          trophies: data.currentTrophies
+        };
+      } catch (err) {
+        console.error(`Failed to fetch trophies for clan ${rawName} in periodic job:`, err.message);
+      }
+    }
+
+    // 3. Compare and notify channels
+    for (const entry of entries) {
+      const lowerName = entry.clan_name.toLowerCase();
+      const latestData = latestClanTrophies[lowerName];
+      if (!latestData) continue; // Skip if API fetch failed in this tick
+
+      const newTrophies = latestData.trophies;
+      const oldTrophies = entry.last_trophies;
+
+      if (newTrophies !== oldTrophies) {
+        const diff = newTrophies - oldTrophies;
+        const action = diff > 0 ? "gained" : "lost";
+        const absDiff = Math.abs(diff);
+
+        // Build status message: 🔷 Vertigo gained 5 trophies and now has 32872 trophies.
+        const message = `🔷 **${latestData.name}** ${action} **${absDiff}** trophies and now has **${newTrophies}** trophies.`;
+
+        // Attempt to post to the channel
+        try {
+          const channel = await client.channels.fetch(entry.channel_id);
+          if (channel && channel.isTextBased()) {
+            await channel.send({ content: message });
+          }
+        } catch (e) {
+          console.error(`Failed to post trophy update to channel ${entry.channel_id} for clan ${entry.clan_name}:`, e.message);
+        }
+      }
+    }
+
+    // 4. Update db counts for successfully checked clans (only if trophies changed)
+    for (const key of Object.keys(latestClanTrophies)) {
+      const latest = latestClanTrophies[key];
+      db.updateClanTrophies(latest.name, latest.trophies);
+    }
+
+  } catch (error) {
+    console.error("Error in background checkTrophies job:", error);
   }
 }
 
